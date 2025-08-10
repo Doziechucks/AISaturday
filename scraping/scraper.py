@@ -1,4 +1,5 @@
 import pandas as pd
+
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -14,34 +15,58 @@ response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.content, 'html.parser')
 
 
+def text_or_none(el):
+    return el.get_text(strip=True) if el else None
+
 def parse_transfers(table):
+    if not table:
+        return []
     transfers = []
-    for row in table.find_all('tr', class_=['odd', 'even']):
+    for row in table.select("tr.odd, tr.even"):
+        # get all tds to choose by position if needed
+        tds = row.find_all('td')
         try:
-            name = row.find('td', class_='hauptlink').get_text(strip=True)
-            position = row.find('td', class_='inline-table').get_text(strip=True)
-            age = row.find('td', class_='zentriert').get_text(strip=True)
-            nationality = row.find('img', class_='flaggenrahmen')['title']
-            fee_text = row.find_all('td', class_='rechts')[0].get_text(strip=True)
+            # safer ways to grab cells
+            name_el = row.find('td', class_='hauptlink')
+            name = text_or_none(name_el)
 
+            pos_el = row.find('td', class_='inline-table')
+            position = text_or_none(pos_el)
 
+            # better: pick the exact td index for age if class ambiguous
+            age = None
+            if len(tds) > 3:
+                age_str = tds[3].get_text(strip=True)  # adjust index
+                try:
+                    age = int(re.sub(r'\D','', age_str))
+                except:
+                    age = None
+
+            img = row.find('img', class_='flaggenrahmen')
+            nationality = img.get('title') if img else 'N/A'
+
+            fee_td = row.find_all('td', class_='rechts')
+            fee_text = fee_td[0].get_text(strip=True) if fee_td else ''
+
+            # normalize fee (very simple)
+            fee = 'N/A'
             if 'loan' in fee_text.lower():
                 fee = 'Loan'
             elif 'free' in fee_text.lower():
                 fee = 'Free'
-            elif 'End of loan' in fee_text:
-                fee = 'Loan Return'
             else:
-                fee = re.sub(r'[^\d.]', '', fee_text) + 'm' if fee_text else 'N/A'
+                cleaned = re.sub(r'[^\d.,kKmM]', '', fee_text)
+                fee = cleaned if cleaned else 'N/A'
 
             transfers.append({
                 'Name': name,
                 'Position': position,
-                'Age': int(age),
+                'Age': age,
                 'Nationality': nationality,
                 'Fee': fee
             })
-        except (AttributeError, TypeError):
+        except Exception as e:
+            # log or print e for debugging
             continue
     return transfers
 
@@ -68,6 +93,9 @@ df_transfers = pd.concat([df_arrivals, df_departures], ignore_index=True)
 # Save to CSV
 df_transfers.to_csv('arsenal_transfers_2023.csv', index=False)
 print("Transfer data saved to 'arsenal_transfers_2023.csv'")
+
+print(response.status_code)
+print(response.text[:1200])
 
 # Optional: Print sample data
 print("\nSample transfer data:")
